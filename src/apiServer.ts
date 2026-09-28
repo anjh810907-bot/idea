@@ -40,6 +40,76 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
+// Cache discovered models in memory for 30 minutes
+let cachedModels: { list: string[]; timestamp: number } | null = null;
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Dynamically discovers officially supported Gemini models (version 3.6+) from Google API,
+ * sorting Flash models and highest versions first.
+ */
+async function discoverSupportedGeminiModels(ai: GoogleGenAI): Promise<string[]> {
+  const now = Date.now();
+  if (cachedModels && now - cachedModels.timestamp < CACHE_TTL_MS && cachedModels.list.length > 0) {
+    return cachedModels.list;
+  }
+
+  const default36PlusModels = [
+    'gemini-3.8-flash',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-flash-latest',
+  ];
+
+  try {
+    const list = await ai.models.list();
+    const candidates: Array<{ name: string; ver: number; isFlash: boolean }> = [];
+
+    for await (const m of list) {
+      const rawName = (m.name || '').replace(/^models\//, '');
+      const actions = m.supportedActions || [];
+      if (!actions.includes('generateContent')) continue;
+      if (!rawName.startsWith('gemini')) continue;
+      // Skip audio/tts/image/robotics specialized endpoints
+      if (/(tts|image|audio|embed|robotics|computer-use|transcribe)/i.test(rawName)) continue;
+
+      // Extract model version (e.g. gemini-3.8-flash -> 3.8)
+      const match = rawName.match(/gemini-(\d+(?:\.\d+)?)/);
+      if (match) {
+        const ver = parseFloat(match[1]);
+        if (ver >= 3.6) {
+          candidates.push({ name: rawName, ver, isFlash: rawName.includes('flash') });
+        }
+      } else if (rawName.includes('latest')) {
+        candidates.push({ name: rawName, ver: 99, isFlash: rawName.includes('flash') });
+      }
+    }
+
+    if (candidates.length > 0) {
+      // Sort Flash models first (faster/cost-efficient), then highest version first
+      candidates.sort((a, b) => {
+        if (a.isFlash !== b.isFlash) return a.isFlash ? -1 : 1;
+        return b.ver - a.ver;
+      });
+
+      const uniqueNames = Array.from(new Set(candidates.map((c) => c.name)));
+      console.log(`[Gemini Dynamic Discovery] Found ${uniqueNames.length} models (>= 3.6):`, uniqueNames);
+      cachedModels = { list: uniqueNames, timestamp: now };
+      return uniqueNames;
+    }
+  } catch (err: any) {
+    console.warn('[Gemini Dynamic Discovery] models.list notice:', err?.message || err);
+  }
+
+  const primaryModel = process.env.GEMINI_MODEL;
+  const fallback = primaryModel
+    ? [primaryModel, ...default36PlusModels.filter((m) => m !== primaryModel)]
+    : default36PlusModels;
+
+  cachedModels = { list: fallback, timestamp: now };
+  return fallback;
+}
+
 /**
  * Resilient Gemini caller with exponential backoff retry and alternate model failover
  * for handling temporary high demand spikes (503 / 429) gracefully.
@@ -54,10 +124,7 @@ async function callGeminiWithRetry(
   },
   maxRetries = 1
 ): Promise<string> {
-  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-  const models = [primaryModel, 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview'].filter(
-    (m, i, arr) => arr.indexOf(m) === i
-  );
+  const models = await discoverSupportedGeminiModels(ai);
   let lastError: any;
 
   for (const model of models) {
@@ -134,16 +201,20 @@ apiRouter.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-apiRouter.get('/gemini/status', (req, res) => {
+apiRouter.get('/gemini/status', async (req, res) => {
   const key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   const hasKey = Boolean(key && key.length > 5);
+  const ai = getGeminiClient();
+  const models = ai ? await discoverSupportedGeminiModels(ai) : ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'];
   res.json({
     available: true,
     hasKey,
-    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    activeModel: models[0] || 'gemini-3.8-flash',
+    supportedModels: models,
+    autoDiscovery: '3.6+ 자동 탐색 활성화',
     message: hasKey
-      ? 'Gemini 3.8 Flash AI 엔진이 활성화되어 있습니다.'
-      : 'Vercel 환경변수(GEMINI_API_KEY) 설정 시 Gemini 3.8 Flash AI 엔진으로 동작합니다.',
+      ? `${models[0] || 'Gemini 3.8 Flash'} AI 엔진이 활성화되어 있습니다 (3.6+ 모델 자동 탐색 및 대체 지원).`
+      : 'Vercel 환경변수(GEMINI_API_KEY) 설정 시 3.6+ 버전 이상의 최신 Gemini 모델을 자동 감지하여 동작합니다.',
   });
 });
 
@@ -420,13 +491,18 @@ apiRouter.get('/share-submissions', (req, res) => {
 });
 
 // Mount API routes strictly under `/api` so frontend `/` is never intercepted
-app.get('/api', (req, res) => {
+app.get('/api', async (req, res) => {
   const key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const hasKey = Boolean(key && key.length > 5);
+  const ai = getGeminiClient();
+  const models = ai ? await discoverSupportedGeminiModels(ai) : ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'];
   res.json({
     status: 'ok',
     name: 'IdeaSpark API Server',
-    geminiKeyConfigured: Boolean(key && key.length > 5),
-    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    geminiKeyConfigured: hasKey,
+    activeModel: models[0] || 'gemini-3.8-flash',
+    supportedModels: models,
+    autoDiscovery: '3.6+ 모델 자동 탐색 기능 활성화됨',
     timestamp: new Date().toISOString(),
   });
 });
