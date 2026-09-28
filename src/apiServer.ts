@@ -337,47 +337,49 @@ apiRouter.post('/gemini/revision-prompt', async (req, res) => {
   res.json({ prompt, source: 'fallback' });
 });
 
+// Fixed and permanent Google Sheet Web App URL requested by the user
+export const FIXED_GOOGLE_SHEET_WEBAPP_URL =
+  'https://script.google.com/macros/s/AKfycbx2NNOJw88rAxVJNPNNK_ApUt9SWpxePN_8j982TOrq8bIgbfmnreNNRIDicrzQPCTiSQ/exec';
+
 // 6. Share submission endpoint
 apiRouter.post('/share-submission', async (req, res) => {
   try {
-    const { studentNumber, shareUrl, studentName, appName, customScriptUrl } = req.body;
+    const { studentNumber, shareUrl, studentName, appName } = req.body;
     if (!studentNumber || !shareUrl) {
       return res.status(400).json({ error: '번호와 공유링크를 모두 입력해 주세요.' });
     }
 
-    const rawScriptUrl = customScriptUrl || process.env.GOOGLE_SHEET_WEBAPP_URL || process.env.VITE_GOOGLE_SHEET_WEBAPP_URL;
-    const scriptUrl = rawScriptUrl ? String(rawScriptUrl).trim() : '';
+    // Always permanently lock to the user-specified Google Sheet Web App URL
+    const scriptUrl = FIXED_GOOGLE_SHEET_WEBAPP_URL;
     let synced = false;
     let syncError: string | null = null;
 
-    if (scriptUrl && scriptUrl.startsWith('http')) {
-      try {
-        const fetchRes = await fetch(scriptUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/plain, */*',
-          },
-          redirect: 'follow',
-          body: JSON.stringify({
-            number: studentNumber,
-            studentNumber,
-            link: shareUrl,
-            shareUrl,
-            studentName: studentName || '',
-            appName: appName || '',
-            timestamp: new Date().toISOString(),
-          }),
-        });
-        if (fetchRes.ok || fetchRes.status === 302 || fetchRes.status === 200) {
-          synced = true;
-        } else {
-          syncError = `HTTP ${fetchRes.status}`;
-        }
-      } catch (err: any) {
-        syncError = err.message || 'Apps Script 호출 실패';
-        console.warn('Google Sheet WebApp sync failed:', err);
+    try {
+      const fetchRes = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*',
+        },
+        redirect: 'follow',
+        body: JSON.stringify({
+          number: String(studentNumber).trim(),
+          studentNumber: String(studentNumber).trim(),
+          link: String(shareUrl).trim(),
+          shareUrl: String(shareUrl).trim(),
+          studentName: studentName ? String(studentName).trim() : '',
+          appName: appName ? String(appName).trim() : '',
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      if (fetchRes.ok || fetchRes.status === 302 || fetchRes.status === 200) {
+        synced = true;
+      } else {
+        syncError = `HTTP ${fetchRes.status}`;
       }
+    } catch (err: any) {
+      syncError = err.message || 'Apps Script 호출 실패';
+      console.warn('Google Sheet WebApp sync failed:', err);
     }
 
     const newRecord: StudentSubmission = {
@@ -395,11 +397,11 @@ apiRouter.post('/share-submission', async (req, res) => {
       success: true,
       submission: newRecord,
       syncedToGoogleSheet: synced,
-      hasScriptConfigured: Boolean(scriptUrl && scriptUrl.startsWith('http')),
+      hasScriptConfigured: true,
       syncError,
       message: synced
         ? '구글 스프레드시트에 성공적으로 등록되었습니다!'
-        : '작품 정보가 기록되었습니다. (구글 시트 연동 URL 설정 시 즉시 시트에 자동 삽입됩니다)',
+        : '작품 정보가 기록되었습니다.',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || '공유 제출 처리 실패' });
@@ -407,10 +409,10 @@ apiRouter.post('/share-submission', async (req, res) => {
 });
 
 apiRouter.get('/share-submissions', (req, res) => {
-  const scriptUrl = process.env.GOOGLE_SHEET_WEBAPP_URL || process.env.VITE_GOOGLE_SHEET_WEBAPP_URL;
   res.json({
     submissions: memorySubmissions,
-    hasScriptConfigured: Boolean(scriptUrl && scriptUrl.startsWith('http')),
+    hasScriptConfigured: true,
+    fixedSheetUrl: FIXED_GOOGLE_SHEET_WEBAPP_URL,
   });
 });
 

@@ -8,13 +8,16 @@ import {
   Copy,
   ChevronDown,
   ChevronUp,
-  Settings,
-  ExternalLink,
   Sparkles,
   Link,
-  UserCheck,
-  AlertCircle
+  AlertCircle,
+  Lock,
+  Info,
+  Check
 } from 'lucide-react';
+
+export const FIXED_GOOGLE_SHEET_WEBAPP_URL =
+  'https://script.google.com/macros/s/AKfycbx2NNOJw88rAxVJNPNNK_ApUt9SWpxePN_8j982TOrq8bIgbfmnreNNRIDicrzQPCTiSQ/exec';
 
 interface ShareWorkModalProps {
   isOpen: boolean;
@@ -33,20 +36,6 @@ interface LocalSubmission {
   synced: boolean;
 }
 
-const APPS_SCRIPT_CODE = `function doPost(e) {
-  try {
-    var data = JSON.parse(e.postData.contents);
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    // A열: 번호, B열: 공유링크 추가
-    sheet.appendRow([data.number || data.studentNumber, data.link || data.shareUrl]);
-    return ContentService.createTextOutput(JSON.stringify({ result: "success" }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ result: "error", message: err.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}`;
-
 export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
   isOpen,
   onClose,
@@ -64,18 +53,12 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
   } | null>(null);
 
   const [showGuide, setShowGuide] = useState(false);
-  const [showSubmissionsList, setShowSubmissionsList] = useState(false);
-  const [copiedCode, setCopiedCode] = useState(false);
   const [copiedTsv, setCopiedTsv] = useState(false);
-  const [customScriptUrl, setCustomScriptUrl] = useState('');
   const [submissions, setSubmissions] = useState<LocalSubmission[]>([]);
 
-  // Load custom script URL and local submissions from localStorage
+  // Load local submissions from localStorage & clean up any legacy sheet url
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedUrl = localStorage.getItem('ideaspark_sheet_webapp_url') || '';
-      setCustomScriptUrl(savedUrl);
-
       try {
         const savedList = localStorage.getItem('ideaspark_local_submissions');
         if (savedList) {
@@ -86,17 +69,6 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
       }
     }
   }, [isOpen]);
-
-  const handleSaveScriptUrl = (url: string) => {
-    setCustomScriptUrl(url);
-    localStorage.setItem('ideaspark_sheet_webapp_url', url.trim());
-  };
-
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(APPS_SCRIPT_CODE);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2500);
-  };
 
   const handleCopyTsv = () => {
     if (submissions.length === 0) return;
@@ -121,101 +93,92 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
     setSubmitStatus(null);
 
     let syncedToGoogleSheet = false;
-    let hasScriptConfigured = false;
-    let syncErrorMsg: string | null = null;
 
+    // 1. First, call the backend API endpoint
     try {
-      const payload = {
-        studentNumber: studentNumber.trim(),
-        shareUrl: shareUrl.trim(),
-        studentName: studentName.trim() || undefined,
-        appName: defaultAppName || undefined,
-        customScriptUrl: customScriptUrl.trim() || undefined,
-      };
+      const res = await fetch('/api/share-submission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentNumber: studentNumber.trim(),
+          shareUrl: shareUrl.trim(),
+          studentName: studentName.trim() || undefined,
+          appName: defaultAppName || undefined,
+        }),
+      });
 
-      try {
-        const res = await fetch('/api/share-submission', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        if (res.ok) {
-          const contentType = res.headers.get('content-type') || '';
-          if (contentType.includes('application/json')) {
-            const data = await res.json();
-            syncedToGoogleSheet = Boolean(data.syncedToGoogleSheet);
-            hasScriptConfigured = Boolean(data.hasScriptConfigured);
-            if (data.syncError) syncErrorMsg = data.syncError;
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await res.json();
+          if (data.syncedToGoogleSheet) {
+            syncedToGoogleSheet = true;
           }
-        } else {
-          syncErrorMsg = `HTTP ${res.status}`;
-        }
-      } catch (networkErr: any) {
-        syncErrorMsg = networkErr?.message || '네트워크 응답 오류';
-      }
-
-      // Direct client-side fallback if server didn't sync and customScriptUrl is set
-      const directUrl = customScriptUrl.trim();
-      if (!syncedToGoogleSheet && directUrl && directUrl.startsWith('http')) {
-        try {
-          await fetch(directUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              number: studentNumber.trim(),
-              studentNumber: studentNumber.trim(),
-              link: shareUrl.trim(),
-              shareUrl: shareUrl.trim(),
-              studentName: studentName.trim() || '',
-              appName: defaultAppName || '',
-              timestamp: new Date().toISOString(),
-            }),
-          });
-          syncedToGoogleSheet = true;
-          hasScriptConfigured = true;
-        } catch {
-          // keep existing status
         }
       }
+    } catch {
+      // Server error or offline, fallback to direct fetch below
+    }
 
-      const newSubmission: LocalSubmission = {
-        id: String(Date.now()),
-        studentNumber: studentNumber.trim(),
-        shareUrl: shareUrl.trim(),
-        studentName: studentName.trim() || undefined,
-        appName: defaultAppName || undefined,
-        submittedAt: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-        synced: syncedToGoogleSheet,
-      };
+    // 2. Direct client-side call to the permanent Google Sheet Web App if server didn't confirm
+    if (!syncedToGoogleSheet) {
+      try {
+        await fetch(FIXED_GOOGLE_SHEET_WEBAPP_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({
+            number: studentNumber.trim(),
+            studentNumber: studentNumber.trim(),
+            link: shareUrl.trim(),
+            shareUrl: shareUrl.trim(),
+            studentName: studentName.trim() || '',
+            appName: defaultAppName || '',
+            timestamp: new Date().toISOString(),
+          }),
+        });
+        syncedToGoogleSheet = true;
+      } catch (err: any) {
+        console.warn('Direct fetch to Google Apps Script failed:', err);
+      }
+    }
 
-      const updatedList = [newSubmission, ...submissions];
-      setSubmissions(updatedList);
+    // Save record to local state & localStorage backup
+    const newSubmission: LocalSubmission = {
+      id: String(Date.now()),
+      studentNumber: studentNumber.trim(),
+      shareUrl: shareUrl.trim(),
+      studentName: studentName.trim() || undefined,
+      appName: defaultAppName || undefined,
+      submittedAt: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+      synced: syncedToGoogleSheet,
+    };
+
+    const updatedList = [newSubmission, ...submissions];
+    setSubmissions(updatedList);
+    try {
       localStorage.setItem('ideaspark_local_submissions', JSON.stringify(updatedList));
+    } catch {
+      // ignore
+    }
 
-      if (syncedToGoogleSheet) {
-        setSubmitStatus({
-          type: 'success',
-          message: `✨ ${studentNumber}번 학생의 작품이 [학생작품공유] 구글 시트에 바로 등록되었습니다!`,
-        });
-        setShareUrl('');
-      } else {
-        setSubmitStatus({
-          type: 'info',
-          message: `작품이 안전하게 기록되었습니다! (번호: ${studentNumber})`,
-          details: hasScriptConfigured
-            ? '구글 시트 Apps Script의 배포 권한("액세스할 수 있는 사용자: 모든 사용자")을 확인해 주세요. [시트 복사] 버튼으로 지금 바로 붙여넣으실 수 있습니다.'
-            : '구글 시트 연동 URL을 설정하면 다음부터 실시간 자동 삽입됩니다. 아래 [제출 목록 시트 복사] 버튼으로 시트 A열에 바로 붙여넣으실 수도 있습니다.',
-        });
-      }
-    } catch (err: any) {
+    setIsSubmitting(false);
+
+    if (syncedToGoogleSheet) {
+      setSubmitStatus({
+        type: 'success',
+        message: `✨ ${studentNumber}번 학생의 작품이 [학생작품공유] 구글 시트에 바로 등록되었습니다!`,
+        details: 'A열(번호)과 B열(공유링크)에 안전하게 저장되었습니다.',
+      });
+      setShareUrl('');
+    } else {
       setSubmitStatus({
         type: 'error',
-        message: err?.message || '제출 처리 중 오류가 발생했습니다. 아래 [시트 복사] 기능을 이용해 주세요.',
+        message: '시트 전송 중 일시적인 네트워크 지연이 발생했습니다.',
+        details: '아래 [제출 목록 시트 복사] 버튼을 누르시면 시트 A열에 바로 붙여넣기(Ctrl+V)하실 수 있습니다.',
       });
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -236,7 +199,7 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
                 <Sparkles className="w-4 h-4 text-emerald-200" />
               </h3>
               <p className="text-xs text-emerald-100">
-                구글 AI 스튜디오로 만든 내 작품 링크를 시트에 제출해요
+                구글 AI 스튜디오로 만든 내 작품 링크를 지정된 공유 시트에 제출해요
               </p>
             </div>
           </div>
@@ -254,7 +217,7 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
           {/* Status Message */}
           {submitStatus && (
             <div
-              className={`p-3.5 rounded-2xl border flex items-start gap-2.5 ${
+              className={`p-3.5 rounded-2xl border flex items-start gap-2.5 transition-all ${
                 submitStatus.type === 'success'
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                   : submitStatus.type === 'info'
@@ -345,18 +308,24 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
             </button>
           </form>
 
-          {/* Sheet Preview Card matching User Image 1 */}
-          <div className="p-3.5 rounded-2xl bg-emerald-50/60 border border-emerald-100 flex items-center justify-between">
+          {/* Fixed Google Sheet Status Card */}
+          <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
                 <FileSpreadsheet className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                  구글 시트: <span className="text-emerald-700">학생작품공유</span>
-                </span>
-                <span className="text-[11px] text-slate-500 block">
-                  A열(번호)과 B열(공유링크) 위치에 정확히 삽입됩니다
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-extrabold text-slate-800">
+                    구글 시트: <span className="text-emerald-700">학생작품공유</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-200/80 text-emerald-900 text-[10px] font-bold">
+                    <Lock className="w-2.5 h-2.5" />
+                    전용 시트 고정 연동됨
+                  </span>
+                </div>
+                <span className="text-[11px] text-slate-500 block mt-0.5">
+                  제출 즉시 A열(번호)과 B열(공유링크) 위치에 자동 기록됩니다
                 </span>
               </div>
             </div>
@@ -365,8 +334,8 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
               <button
                 type="button"
                 onClick={handleCopyTsv}
-                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1 cursor-pointer"
-                title="시트의 A2 셀에 바로 붙여넣을 수 있도록 전체 복사"
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs shrink-0 ml-2"
+                title="시트 백업 또는 수동 확인용 클립보드 복사"
               >
                 <Copy className="w-3 h-3" />
                 {copiedTsv ? '복사 완료!' : `제출 목록 (${submissions.length}) 시트 복사`}
@@ -374,7 +343,7 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
             )}
           </div>
 
-          {/* Teacher Guide Toggle */}
+          {/* Information Notice for Teachers (Locked Sheet Guide) */}
           <div className="border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/50">
             <button
               type="button"
@@ -382,8 +351,8 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
               className="w-full px-4 py-3 text-left font-bold text-xs sm:text-sm text-slate-700 hover:bg-slate-100 transition-colors flex items-center justify-between cursor-pointer"
             >
               <span className="flex items-center gap-2">
-                <Settings className="w-4 h-4 text-emerald-600" />
-                구글 시트 실시간 자동 연동 방법 (선생님 안내)
+                <Info className="w-4 h-4 text-emerald-600" />
+                공유 시트 연동 안내 (선생님 참고)
               </span>
               {showGuide ? (
                 <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -393,84 +362,38 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
             </button>
 
             {showGuide && (
-              <div className="p-4 pt-1 text-xs text-slate-600 space-y-3.5 border-t border-slate-200 bg-white">
-                <div className="space-y-2">
-                  <div className="flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-black flex items-center justify-center text-[10px] shrink-0 mt-0.5">
-                      1
-                    </span>
-                    <p>
-                      <strong>학생작품공유</strong> 구글 시트 상단 메뉴에서{' '}
-                      <span className="px-1.5 py-0.5 rounded bg-slate-100 font-semibold text-slate-800">
-                        확장 프로그램 &gt; Apps Script
-                      </span>
-                      를 클릭합니다.
-                    </p>
-                  </div>
+              <div className="p-4 pt-2 text-xs text-slate-600 space-y-2.5 border-t border-slate-200 bg-white leading-relaxed">
+                <div className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">
+                    ✓
+                  </span>
+                  <p>
+                    <strong>공유 시트 주소 영구 고정:</strong> 본 프로그램은 전용{' '}
+                    <strong className="text-emerald-700">[학생작품공유]</strong> 구글 시트로 주소가 고정되어 있습니다. 선생님이나 학생이 별도로 시트 주소를 수정하거나 교체할 필요 없이 바로 사용하실 수 있습니다.
+                  </p>
+                </div>
 
-                  <div className="flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-black flex items-center justify-center text-[10px] shrink-0 mt-0.5">
-                      2
-                    </span>
-                    <div className="flex-1">
-                      <p>
-                        기존 내용을 지우고 아래 스크립트를 붙여넣은 후 저장(💾)합니다:
-                      </p>
-                      <div className="mt-1.5 relative">
-                        <pre className="p-3 bg-slate-900 text-emerald-300 font-mono text-[11px] rounded-xl overflow-x-auto leading-relaxed">
-                          {APPS_SCRIPT_CODE}
-                        </pre>
-                        <button
-                          type="button"
-                          onClick={handleCopyCode}
-                          className="absolute top-2 right-2 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 shadow-xs cursor-pointer"
-                        >
-                          <Copy className="w-3 h-3" />
-                          {copiedCode ? '복사됨!' : '코드 복사'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">
+                    ✓
+                  </span>
+                  <p>
+                    <strong>시트 자동 기재 위치:</strong> 학생이 번호와 링크를 적고 제출 버튼을 누르면, 구글 시트의{' '}
+                    <span className="font-semibold text-slate-800">A열(번호)</span>과{' '}
+                    <span className="font-semibold text-slate-800">B열(공유링크)</span>에 자동으로 실시간 추가됩니다.
+                  </p>
+                </div>
 
-                  <div className="flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-black flex items-center justify-center text-[10px] shrink-0 mt-0.5">
-                      3
-                    </span>
-                    <p>
-                      우측 상단 <strong>[배포] &gt; [새 배포]</strong>를 누르고 유형을{' '}
-                      <strong>웹 앱</strong>으로 선택한 후, 액세스 권한을{' '}
-                      <span className="text-emerald-700 font-bold underline">모든 사용자(Anyone)</span>
-                      로 지정하고 [배포]를 누릅니다.
-                    </p>
-                  </div>
-
-                  <div className="flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-black flex items-center justify-center text-[10px] shrink-0 mt-0.5">
-                      4
-                    </span>
-                    <div className="flex-1">
-                      <p>생성된 <strong>웹 앱 URL</strong>을 아래에 입력해 두면 완료됩니다:</p>
-                      <div className="mt-1.5 flex gap-2">
-                        <input
-                          type="url"
-                          value={customScriptUrl}
-                          onChange={(e) => handleSaveScriptUrl(e.target.value)}
-                          placeholder="https://script.google.com/macros/s/.../exec"
-                          className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleSaveScriptUrl(customScriptUrl)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-white hover:bg-slate-700 transition-colors"
-                        >
-                          저장
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        * 설정 후에는 학생들이 제출할 때마다 [학생작품공유] 구글 시트의 번호와 공유링크가 실시간으로 자동 기재됩니다.
-                      </p>
-                    </div>
-                  </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">
+                    ✓
+                  </span>
+                  <p>
+                    <strong>편리한 백업 복사 기능:</strong> 제출된 내역은 본 기기에도 함께 임시 보관되므로, 필요한 경우 상단의{' '}
+                    <span className="font-semibold text-emerald-700">[제출 목록 시트 복사]</span> 버튼을 눌러 시트 어느 곳에나{' '}
+                    <kbd className="px-1 py-0.5 bg-slate-100 rounded text-[10px] border border-slate-200 font-mono">Ctrl + V</kbd>
+                    로 한 번에 붙여넣으실 수 있습니다.
+                  </p>
                 </div>
               </div>
             )}
@@ -479,7 +402,7 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
 
         {/* Footer */}
         <div className="px-5 sm:px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-          <span>제출된 링크는 구글 시트에 안전하게 전송됩니다.</span>
+          <span>제출된 링크는 공식 구글 시트에 안전하게 전송됩니다.</span>
           <button
             type="button"
             onClick={onClose}
