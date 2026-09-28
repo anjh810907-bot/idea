@@ -120,6 +120,10 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
     setIsSubmitting(true);
     setSubmitStatus(null);
 
+    let syncedToGoogleSheet = false;
+    let hasScriptConfigured = false;
+    let syncErrorMsg: string | null = null;
+
     try {
       const payload = {
         studentNumber: studentNumber.trim(),
@@ -129,13 +133,52 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
         customScriptUrl: customScriptUrl.trim() || undefined,
       };
 
-      const res = await fetch('/api/share-submission', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const res = await fetch('/api/share-submission', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
 
-      const data = await res.json();
+        if (res.ok) {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await res.json();
+            syncedToGoogleSheet = Boolean(data.syncedToGoogleSheet);
+            hasScriptConfigured = Boolean(data.hasScriptConfigured);
+            if (data.syncError) syncErrorMsg = data.syncError;
+          }
+        } else {
+          syncErrorMsg = `HTTP ${res.status}`;
+        }
+      } catch (networkErr: any) {
+        syncErrorMsg = networkErr?.message || '네트워크 응답 오류';
+      }
+
+      // Direct client-side fallback if server didn't sync and customScriptUrl is set
+      const directUrl = customScriptUrl.trim();
+      if (!syncedToGoogleSheet && directUrl && directUrl.startsWith('http')) {
+        try {
+          await fetch(directUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              number: studentNumber.trim(),
+              studentNumber: studentNumber.trim(),
+              link: shareUrl.trim(),
+              shareUrl: shareUrl.trim(),
+              studentName: studentName.trim() || '',
+              appName: defaultAppName || '',
+              timestamp: new Date().toISOString(),
+            }),
+          });
+          syncedToGoogleSheet = true;
+          hasScriptConfigured = true;
+        } catch {
+          // keep existing status
+        }
+      }
 
       const newSubmission: LocalSubmission = {
         id: String(Date.now()),
@@ -144,14 +187,14 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
         studentName: studentName.trim() || undefined,
         appName: defaultAppName || undefined,
         submittedAt: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-        synced: Boolean(data.syncedToGoogleSheet),
+        synced: syncedToGoogleSheet,
       };
 
       const updatedList = [newSubmission, ...submissions];
       setSubmissions(updatedList);
       localStorage.setItem('ideaspark_local_submissions', JSON.stringify(updatedList));
 
-      if (data.syncedToGoogleSheet) {
+      if (syncedToGoogleSheet) {
         setSubmitStatus({
           type: 'success',
           message: `✨ ${studentNumber}번 학생의 작품이 [학생작품공유] 구글 시트에 바로 등록되었습니다!`,
@@ -160,16 +203,16 @@ export const ShareWorkModal: React.FC<ShareWorkModalProps> = ({
       } else {
         setSubmitStatus({
           type: 'info',
-          message: `등록되었습니다! (번호: ${studentNumber}, 구글 AI 스튜디오 공유링크 기록 완료)`,
-          details: data.hasScriptConfigured
-            ? '시트 연동 상태를 확인해 주세요.'
-            : '하단 [구글 시트 실시간 자동 연동 방법]을 설정하시면 학생이 제출할 때마다 시트에 1초 만에 자동 삽입됩니다.',
+          message: `작품이 안전하게 기록되었습니다! (번호: ${studentNumber})`,
+          details: hasScriptConfigured
+            ? '구글 시트 Apps Script의 배포 권한("액세스할 수 있는 사용자: 모든 사용자")을 확인해 주세요. [시트 복사] 버튼으로 지금 바로 붙여넣으실 수 있습니다.'
+            : '구글 시트 연동 URL을 설정하면 다음부터 실시간 자동 삽입됩니다. 아래 [제출 목록 시트 복사] 버튼으로 시트 A열에 바로 붙여넣으실 수도 있습니다.',
         });
       }
-    } catch {
+    } catch (err: any) {
       setSubmitStatus({
         type: 'error',
-        message: '제출 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+        message: err?.message || '제출 처리 중 오류가 발생했습니다. 아래 [시트 복사] 기능을 이용해 주세요.',
       });
     } finally {
       setIsSubmitting(false);

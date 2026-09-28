@@ -52,9 +52,9 @@ async function callGeminiWithRetry(
     responseMimeType?: string;
     temperature?: number;
   },
-  maxRetries = 2
+  maxRetries = 1
 ): Promise<string> {
-  const models = ['gemini-3.8-flash', 'gemini-flash-latest'];
+  const models = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
   let lastError: any;
 
   for (const model of models) {
@@ -74,14 +74,22 @@ async function callGeminiWithRetry(
         lastError = err;
         const status = err?.status || err?.code || (err?.error && err.error.code);
         const message = String(err?.message || '');
+        const isQuota =
+          status === 429 ||
+          message.includes('429') ||
+          message.includes('RESOURCE_EXHAUSTED') ||
+          message.includes('quota');
+
+        if (isQuota) {
+          console.warn(`[Gemini API] Quota exhausted on ${model}, immediately trying next model...`);
+          break; // Switch to next model immediately without waiting
+        }
+
         const isTransient =
           status === 503 ||
-          status === 429 ||
           message.includes('503') ||
-          message.includes('429') ||
           message.includes('high demand') ||
-          message.includes('UNAVAILABLE') ||
-          message.includes('RESOURCE_EXHAUSTED');
+          message.includes('UNAVAILABLE');
 
         if (isTransient) {
           if (attempt < maxRetries) {
@@ -90,7 +98,7 @@ async function callGeminiWithRetry(
             await new Promise((resolve) => setTimeout(resolve, delay));
             continue;
           }
-          console.warn(`[Gemini API] Model ${model} is experiencing temporary high demand, trying next model or fallback...`);
+          console.warn(`[Gemini API] Model ${model} is experiencing temporary high demand, trying next model...`);
           break;
         } else {
           break;
@@ -129,9 +137,9 @@ apiRouter.get('/gemini/status', (req, res) => {
   res.json({
     available: true,
     hasKey,
-    model: 'gemini-3.8-flash',
+    model: 'gemini-2.5-flash',
     message: hasKey
-      ? 'Gemini 3.8 Flash AI 엔진이 활성화되어 있습니다.'
+      ? 'Gemini 2.5 Flash AI 엔진이 활성화되어 있습니다.'
       : 'API Key 미설정 시에도 내장된 스마트 템플릿 엔진으로 고품질 프롬프트를 자동 생성합니다.',
   });
 });
@@ -337,15 +345,20 @@ apiRouter.post('/share-submission', async (req, res) => {
       return res.status(400).json({ error: '번호와 공유링크를 모두 입력해 주세요.' });
     }
 
-    const scriptUrl = customScriptUrl || process.env.GOOGLE_SHEET_WEBAPP_URL || process.env.VITE_GOOGLE_SHEET_WEBAPP_URL;
+    const rawScriptUrl = customScriptUrl || process.env.GOOGLE_SHEET_WEBAPP_URL || process.env.VITE_GOOGLE_SHEET_WEBAPP_URL;
+    const scriptUrl = rawScriptUrl ? String(rawScriptUrl).trim() : '';
     let synced = false;
     let syncError: string | null = null;
 
-    if (scriptUrl && typeof scriptUrl === 'string' && scriptUrl.startsWith('http')) {
+    if (scriptUrl && scriptUrl.startsWith('http')) {
       try {
         const fetchRes = await fetch(scriptUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/plain, */*',
+          },
+          redirect: 'follow',
           body: JSON.stringify({
             number: studentNumber,
             studentNumber,
@@ -356,7 +369,7 @@ apiRouter.post('/share-submission', async (req, res) => {
             timestamp: new Date().toISOString(),
           }),
         });
-        if (fetchRes.ok) {
+        if (fetchRes.ok || fetchRes.status === 302 || fetchRes.status === 200) {
           synced = true;
         } else {
           syncError = `HTTP ${fetchRes.status}`;
