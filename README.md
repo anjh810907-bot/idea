@@ -1,11 +1,90 @@
-<div align="center">
+# 💡 IdeaSpark (아이디어스파크)
+> **학생을 위한 쉽고 재미있는 웹앱 기획 & AI 코딩 프롬프트 스튜디오**
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+IdeaSpark는 학생들이 자신의 아이디어를 체계적으로 구체화하고, 최신 AI 코딩 도구(**v0.dev, Bolt.new, Lovable.dev, Claude Artifacts**)에 즉시 붙여넣어 실제 작동하는 웹 애플리케이션으로 제작할 수 있는 **전문가 수준의 고정밀 개발 프롬프트**를 자동으로 생성해 주는 웹 애플리케이션입니다.
 
-  <h1>Built with AI Studio</h2>
+---
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## 🌟 주요 특징
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+1. **친근하고 직관적인 10단계 기획 위저드 (Wizard)**
+   - 1단계: **아이디어 시작** (8가지 추천 아이디어 칩 & 자유 입력)
+   - 2단계: **앱의 목적** (학습, 게임, 유용한 정보, 시간 관리, 기록, 생활 문제 해결 등)
+   - 3단계: **대상 사용자** (나 자신, 친구들, 학생 전체, 선생님, 가족 등)
+   - 4단계: **핵심 기능 선택** (퀴즈, 타이머, 점수, 할 일, 돌림판, 순위표, 자동 저장 등 16+ 카드)
+   - 5단계: **기능별 세부 규칙 설정** (문제 수, 타이머 모드, 콤보 규칙 등 인터랙티브 질문지)
+   - 6단계: **화면 구성 & 흐름** (메인, 플레이, 결과 화면 + **✨ AI 화면 흐름 추천**)
+   - 7단계: **디자인 & 마스코트** (파스텔/아케이드/미니멀 스타일, 5가지 컬러 팔레트, 6종 동물 마스코트와 응원 말풍선)
+   - 8단계: **특별한 킬러 아이디어** (상상력을 자극하는 독창적인 게임화/보상 요소)
+   - 9단계: **앱 이름 & 슬로건** (직접 입력 + **✨ AI 이름/슬로건 3종 추천**)
+   - 10단계: **최종 설계서 (Blueprint) & 프롬프트 생성**
 
-</div>
+2. **완벽한 이중 AI 엔진 아키텍처 (Resilience & Reliability)**
+   - **Google Gemini 3.8 Flash API**: 서버 사이드에서 학생의 기획 내용을 심층 분석하여 구조화된 개발 지시서 작성
+   - **지능형 스마트 템플릿 엔진 (내장 Fallback)**: API 키가 없거나 네트워크 오류 시에도 100% 끊김 없이 전문가 수준의 마크다운 프롬프트 자동 생성
+
+3. **강력한 프롬프트 활용 도구**
+   - **📋 1클릭 복사 & 다운로드**: 클립보드 복사 및 `.md` 마크다운 파일 저장
+   - **✏️ 인라인 에디터**: 브라우저 내에서 직접 프롬프트 내용 자유롭게 가공
+   - **🛠️ 수정 프롬프트 제작 모달**: 앱 제작 후 "버튼이 작아요", "소리가 안 나요" 등 피드백을 주면 AI에게 전달할 맞춤형 재수정 지시서 생성
+   - **💾 LocalStorage 자동 저장**: 작성 중인 내용이 브라우저에 실시간 임시 저장되어 새로고침해도 안전
+
+---
+
+## 🛠️ 기술 스택 (Tech Stack)
+
+- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Lucide React
+- **Backend / API**: Express, Node.js, `@google/genai` (Gemini 3.8 Flash)
+- **Deployment**: Vercel / Cloud Run 호환 구조
+
+---
+
+## 🚀 로컬 개발 환경 실행 방법
+
+```bash
+# 1. 의존성 패키지 설치
+npm install
+
+# 2. 개발 서버 실행 (포트 3000)
+npm run dev
+
+# 3. 브라우저에서 접속
+# http://localhost:3000
+```
+
+### 환경 변수 설정 (`.env`)
+Gemini API를 통한 AI 추천 및 프롬프트 고도화를 원할 경우 프로젝트 루트에 `.env` 파일을 생성합니다.
+```env
+GEMINI_API_KEY="your-google-gemini-api-key"
+```
+*(참고: API 키가 없어도 내장된 스마트 템플릿 엔진을 통해 모든 프롬프트 생성 기능이 완벽하게 작동합니다!)*
+
+---
+
+## ☁️ Vercel 배포 가이드
+
+IdeaSpark는 Vercel 환경에 간편하게 배포할 수 있도록 설정되어 있습니다.
+
+### 방법 1: Vercel CLI로 배포
+```bash
+# Vercel 로그인 및 배포
+npx vercel
+```
+
+### 방법 2: GitHub 저장소 연동 배포
+1. GitHub에 코드를 푸시합니다.
+2. [Vercel Dashboard](https://vercel.com)에서 **Add New... > Project**를 선택하고 해당 저장소를 임포트합니다.
+3. **Build and Output Settings**:
+   - Framework Preset: `Vite`
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+4. **Environment Variables**:
+   - `GEMINI_API_KEY`: 발급받은 Google Gemini API 키 입력 (선택 사항)
+5. **Deploy** 버튼을 누르면 배포가 완료됩니다!
+
+---
+
+## 🎨 학생을 위한 친절한 UI/UX 설계 원칙
+- **부드러운 색감**: 눈이 피로하지 않은 파스텔 톤과 둥글둥글한 카드형 UI
+- **직관적 상호작용**: 텍스트 입력이 부담스러운 학생들을 위한 풍부한 예시 칩과 원클릭 선택 지원
+- **용어 준수**: "초등학생"이라는 고정관념 문구를 배제하고, 주도성을 살리는 **"학생 기획자"** 표현 일관성 유지
