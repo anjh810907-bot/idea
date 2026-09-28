@@ -54,7 +54,10 @@ async function callGeminiWithRetry(
   },
   maxRetries = 1
 ): Promise<string> {
-  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview'];
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const models = [primaryModel, 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview'].filter(
+    (m, i, arr) => arr.indexOf(m) === i
+  );
   let lastError: any;
 
   for (const model of models) {
@@ -123,7 +126,7 @@ interface StudentSubmission {
 
 const memorySubmissions: StudentSubmission[] = [];
 
-// Create API Router to handle both `/api/*` and direct routes
+// Create API Router for all `/api/*` endpoints
 const apiRouter = express.Router();
 
 // 1. Health check & API status
@@ -137,10 +140,10 @@ apiRouter.get('/gemini/status', (req, res) => {
   res.json({
     available: true,
     hasKey,
-    model: 'gemini-3.8-flash',
+    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
     message: hasKey
       ? 'Gemini 3.8 Flash AI 엔진이 활성화되어 있습니다.'
-      : 'API Key 미설정 시에도 내장된 스마트 템플릿 엔진으로 고품질 프롬프트를 자동 생성합니다.',
+      : 'Vercel 환경변수(GEMINI_API_KEY) 설정 시 Gemini 3.8 Flash AI 엔진으로 동작합니다.',
   });
 });
 
@@ -185,7 +188,7 @@ ${JSON.stringify(blueprint, null, 2)}
         return res.json({ prompt: generatedText, source: 'gemini' });
       }
     } catch (err: any) {
-      console.warn('[Gemini Prompt Generator] High demand or transient spike, safely falling back to intelligent template engine.');
+      console.warn('[Gemini Prompt Generator] API call notice:', err?.message || err);
     }
   }
 
@@ -223,7 +226,7 @@ apiRouter.post('/gemini/recommend-screens', async (req, res) => {
         return res.json({ screens: parsed, source: 'gemini' });
       }
     } catch (err: any) {
-      console.warn('[Gemini Recommend Screens] High demand or transient spike, using curated smart recommendations.');
+      console.warn('[Gemini Recommend Screens] API call notice:', err?.message || err);
     }
   }
 
@@ -271,7 +274,7 @@ apiRouter.post('/gemini/recommend-names', async (req, res) => {
         return res.json({ names: parsed, source: 'gemini' });
       }
     } catch (err: any) {
-      console.warn('[Gemini Recommend Names] High demand or transient spike, using curated smart recommendations.');
+      console.warn('[Gemini Recommend Names] API call notice:', err?.message || err);
     }
   }
 
@@ -329,7 +332,7 @@ apiRouter.post('/gemini/revision-prompt', async (req, res) => {
         return res.json({ prompt: generatedText, source: 'gemini' });
       }
     } catch (err: any) {
-      console.warn('[Gemini Revision Prompt] High demand or transient spike, using curated smart template.');
+      console.warn('[Gemini Revision Prompt] API call notice:', err?.message || err);
     }
   }
 
@@ -416,8 +419,18 @@ apiRouter.get('/share-submissions', (req, res) => {
   });
 });
 
-// Support both `/api/*` and direct `/...` routes so Vercel rewrites work seamlessly
+// Mount API routes strictly under `/api` so frontend `/` is never intercepted
+app.get('/api', (req, res) => {
+  const key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  res.json({
+    status: 'ok',
+    name: 'IdeaSpark API Server',
+    geminiKeyConfigured: Boolean(key && key.length > 5),
+    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.use('/api', apiRouter);
-app.use('/', apiRouter);
 
 export default app;
