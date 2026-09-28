@@ -54,7 +54,7 @@ async function callGeminiWithRetry(
   },
   maxRetries = 1
 ): Promise<string> {
-  const models = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+  const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview'];
   let lastError: any;
 
   for (const model of models) {
@@ -137,9 +137,9 @@ apiRouter.get('/gemini/status', (req, res) => {
   res.json({
     available: true,
     hasKey,
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.8-flash',
     message: hasKey
-      ? 'Gemini 2.5 Flash AI 엔진이 활성화되어 있습니다.'
+      ? 'Gemini 3.8 Flash AI 엔진이 활성화되어 있습니다.'
       : 'API Key 미설정 시에도 내장된 스마트 템플릿 엔진으로 고품질 프롬프트를 자동 생성합니다.',
   });
 });
