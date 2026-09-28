@@ -1,12 +1,16 @@
 {
-  "buildCommand": "vite build",
+  "buildCommand": "vite build && esbuild src/vercelHandler.ts --bundle --platform=node --format=esm --packages=external --outfile=api/index.js",
   "outputDirectory": "dist",
   "functions": {
-    "api/**/*.ts": {
+    "api/index.js": {
       "maxDuration": 60
     }
   },
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    },
     {
       "source": "/((?!api(?:/|$)).*)",
       "destination": "/index.html"

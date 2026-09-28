@@ -197,6 +197,27 @@ const memorySubmissions: StudentSubmission[] = [];
 const apiRouter = express.Router();
 
 // 1. Health check & API status
+const getApiStatus = async () => {
+  const key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const hasKey = Boolean(key && key.length > 5);
+  const ai = getGeminiClient();
+  const models = ai ? await discoverSupportedGeminiModels(ai) : ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'];
+  return {
+    status: 'ok',
+    name: 'IdeaSpark API Server',
+    geminiKeyConfigured: hasKey,
+    activeModel: models[0] || 'gemini-3.8-flash',
+    supportedModels: models,
+    autoDiscovery: '3.6+ 모델 자동 탐색 기능 활성화됨',
+    timestamp: new Date().toISOString(),
+  };
+};
+
+apiRouter.get('/', async (req, res) => {
+  const status = await getApiStatus();
+  res.json(status);
+});
+
 apiRouter.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -491,20 +512,9 @@ apiRouter.get('/share-submissions', (req, res) => {
 });
 
 // Mount API routes strictly under `/api` so frontend `/` is never intercepted
-app.get('/api', async (req, res) => {
-  const key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  const hasKey = Boolean(key && key.length > 5);
-  const ai = getGeminiClient();
-  const models = ai ? await discoverSupportedGeminiModels(ai) : ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'];
-  res.json({
-    status: 'ok',
-    name: 'IdeaSpark API Server',
-    geminiKeyConfigured: hasKey,
-    activeModel: models[0] || 'gemini-3.8-flash',
-    supportedModels: models,
-    autoDiscovery: '3.6+ 모델 자동 탐색 기능 활성화됨',
-    timestamp: new Date().toISOString(),
-  });
+app.get(['/api', '/api/'], async (req, res) => {
+  const status = await getApiStatus();
+  res.json(status);
 });
 
 app.use('/api', apiRouter);
